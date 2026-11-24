@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1426" />
+  <title>一寸薄冰</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 8 8%22%3E%3Crect width=%228%22 height=%228%22 fill=%22%230b1426%22/%3E%3Crect x=%222%22 y=%222%22 width=%224%22 height=%224%22 fill=%22%23ffcf6b%22/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main id="app">
+    <header class="top">
+      <h1>一寸薄冰</h1>
+      <div class="info">
+        <span id="level-label">第 1 关</span>
+        <span id="lamp-label" class="lamps">灯 0/0</span>
+      </div>
+    </header>
+
+    <div id="board-wrap">
+      <canvas id="board" aria-label="冰面"></canvas>
+      <div id="banner" class="banner" hidden>
+        <p id="banner-text"></p>
+        <div class="banner-actions">
+          <button id="btn-next" class="primary" hidden>下一关</button>
+          <button id="btn-banner-restart" hidden>重开</button>
+        </div>
+      </div>
+    </div>
+
+    <p id="tip" class="tip"></p>
+
+    <nav class="pad" aria-label="方向">
+      <button data-dir="up" class="pad-up" aria-label="上">▲</button>
+      <button data-dir="left" class="pad-left" aria-label="左">◀</button>
+      <button data-dir="down" class="pad-down" aria-label="下">▼</button>
+      <button data-dir="right" class="pad-right" aria-label="右">▶</button>
+    </nav>
+
+    <footer class="actions">
+      <button id="btn-restart">重开</button>
+      <button id="btn-help" disabled title="重开一次后可求助">求助</button>
+      <button id="btn-levels">选关</button>
+    </footer>
+  </main>
+
+  <div id="help-panel" class="modal" hidden>
+    <div class="sheet">
+      <h2>求助</h2>
+      <p class="muted">看一段短广告（模拟），播完后获得奖励。</p>
+      <button id="btn-hint" class="primary">看提示（接下来 3 步）</button>
+      <button id="btn-undo">悔一步</button>
+      <button id="btn-help-cancel" class="ghost">算了</button>
+    </div>
+  </div>
+
+  <div id="ad-overlay" class="modal ad" hidden>
+    <div class="sheet">
+      <p class="ad-tag">广告 · 模拟</p>
+      <p class="ad-title">冬夜热汤，暖到心里</p>
+      <p id="ad-count" class="ad-count">4</p>
+      <p class="muted">播完即可获得奖励</p>
+      <button id="btn-ad-close" class="ghost">关闭（不领奖励）</button>
+    </div>
+  </div>
+
+  <div id="levels-panel" class="modal" hidden>
+    <div class="sheet wide">
+      <h2>选关</h2>
+      <div id="level-grid" class="level-grid"></div>
+      <button id="btn-levels-close" class="ghost">关闭</button>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
