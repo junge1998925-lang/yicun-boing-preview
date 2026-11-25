@@ -2,12 +2,13 @@
 import { Game } from './game.js';
 import { Renderer } from './render.js';
 import { SimulatedRewardedAd, requestReward } from './ads.js';
-import { DIRS, dirTo, allLit } from './rules.js';
+import { allLit, move as slide, afterLeave, isLamp } from './rules.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const AD_MS = Math.max(200, Number(params.get('adms')) || 4000);
-const STEP_MS = 90;
+const CELL_MS = 55; // 滑行动画：每格耗时
+const SWIPE_PX = 18; // 轻扫判定阈值
 
 function storage() {
   try {
@@ -102,28 +103,31 @@ async function boot() {
       if (game.hint.length) tip = '提示：按数字顺序走。';
       else if (s.stuck) tip = '无路可走。重开，或者点「求助」。';
       else if (allLit(s) && lv.lamps.length) tip = '灯都亮了，回家吧。';
-      else if (s.moves === 0) tip = game.def.aha.startsWith('【教学】') ? game.def.aha.replace('【教学】', '') : '薄冰只能踩一次。点相邻的格子或滑动来走。';
+      else if (s.moves === 0) tip = game.def.aha.startsWith('【教学】') ? game.def.aha.replace('【教学】', '') : '轻扫冰面：人会一路滑到撞上阻挡才停。薄冰只能踩一次。';
     }
     $('tip').textContent = tip;
     exposeDebug();
   }
 
+  /** 提示：每次滑行的落点（按顺序）。 */
   function hintCells() {
     const cells = [];
     let st = game.state;
-    let pos = st.pos;
-    const lv = st.level;
     for (const d of game.hint) {
-      const [dx, dy] = DIRS[d];
-      pos = pos + dx + dy * lv.w;
-      cells.push(pos);
+      const r = slide(st, d);
+      if (r.result === 'illegal') break;
+      st = r.state;
+      cells.push(st.pos);
     }
     return cells;
   }
 
+  let queued = null; // 动画中缓存 1 次输入
   function doMove(dir) {
-    if (anim || !$('ad-overlay').hidden || !$('help-panel').hidden) return;
+    if (!$('ad-overlay').hidden || !$('help-panel').hidden || !$('levels-panel').hidden) return;
+    if (anim) { queued = dir; return; }
     const from = game.state.pos;
+    const prev = game.state;
     const { result, path } = game.move(dir);
     message = '';
     if (result === 'illegal') {
@@ -131,13 +135,14 @@ async function boot() {
       if (navigator.vibrate) try { navigator.vibrate(15); } catch {}
       return;
     }
-    anim = { cells: [from, ...path], start: performance.now() };
+    anim = { cells: [from, ...path], prev, start: performance.now(), ms: Math.min(900, 90 + CELL_MS * path.length) };
     scheduleDeadCheck();
     updateUI();
   }
 
   function restart() {
     pendingDead = false;
+    queued = null;
     game.restart();
     anim = null;
     message = '';
@@ -148,6 +153,7 @@ async function boot() {
   function loadLevel(n) {
     if (!game.load(n)) return false;
     pendingDead = false;
+    queued = null;
     deadKnown = false;
     anim = null;
     message = '';
@@ -168,7 +174,7 @@ async function boot() {
       if (kind === 'hint') {
         const { steps, rewound } = game.giveHint();
         message = steps.length
-          ? (rewound ? `已退回 ${rewound} 步到还能回家的地方。` : '') + '按数字顺序走。'
+          ? (rewound ? `已退回 ${rewound} 步到还能回家的地方。` : '') + '按数字顺序滑（数字是每次滑行停下的位置）。'
           : '这关有点绕，先重开试试。';
       } else {
         game.undo();
@@ -207,7 +213,16 @@ async function boot() {
     else if (e.key === 'r' || e.key === 'R') restart();
     else if (e.key === 'Enter' && game.state.won && game.levelId < game.count) loadLevel(game.levelId + 1);
   });
-  document.querySelectorAll('.pad button').forEach((b) => b.addEventListener('click', () => doMove(b.dataset.dir)));
+  // 屏幕方向键：按下即滑（触摸手势后浏览器可能不合成 click，不能依赖 click）。
+  // click 只处理键盘激活（Tab 聚焦后按空格/回车，detail === 0），避免与 pointerdown 重复。
+  document.querySelectorAll('.pad button').forEach((b) => {
+    b.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      doMove(b.dataset.dir);
+    });
+    b.addEventListener('click', (e) => { if (e.detail === 0) doMove(b.dataset.dir); });
+  });
 
   const canvas = $('board');
   let down = null;
@@ -219,23 +234,30 @@ async function boot() {
     if (!down) return;
     const dx = e.clientX - down.x;
     const dy = e.clientY - down.y;
+    const fired = down.fired;
     down = null;
-    if (Math.hypot(dx, dy) >= 24) {
+    if (fired) return;
+    if (Math.hypot(dx, dy) >= SWIPE_PX) {
       doMove(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up');
       return;
     }
+    // 轻点：按点击位置相对玩家的主方向，发起同一套整段滑行（不是走一格）
     const lv = game.state.level;
     const i = renderer.cellAt(lv, e.clientX, e.clientY);
-    if (i < 0) return;
-    const d = dirTo(lv, game.state.pos, i);
-    if (d) doMove(d);
-    else if (i !== game.state.pos) {
-      // 点了远处：朝主方向走一步，方便新手
-      const p = game.state.pos;
-      const ddx = (i % lv.w) - (p % lv.w);
-      const ddy = Math.floor(i / lv.w) - Math.floor(p / lv.w);
-      doMove(Math.abs(ddx) >= Math.abs(ddy) ? (ddx > 0 ? 'right' : 'left') : ddy > 0 ? 'down' : 'up');
-    }
+    if (i < 0 || i === game.state.pos) return;
+    const p = game.state.pos;
+    const ddx = (i % lv.w) - (p % lv.w);
+    const ddy = Math.floor(i / lv.w) - Math.floor(p / lv.w);
+    doMove(Math.abs(ddx) >= Math.abs(ddy) ? (ddx > 0 ? 'right' : 'left') : ddy > 0 ? 'down' : 'up');
+  });
+  // 拖动中途一旦超过阈值就立即出发，手感更跟手
+  canvas.addEventListener('pointermove', (e) => {
+    if (!down || down.fired) return;
+    const dx = e.clientX - down.x;
+    const dy = e.clientY - down.y;
+    if (Math.hypot(dx, dy) < SWIPE_PX * 1.6) return;
+    down.fired = true;
+    doMove(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up');
   });
   canvas.addEventListener('pointercancel', () => { down = null; });
 
@@ -277,28 +299,50 @@ async function boot() {
     };
   }
 
+  /** 动画中的显示局面：从滑行前的局面按规则重放到第 seg 格（已离开的格子碎、已到达的灯亮）。 */
+  function displayState(seg) {
+    const prev = anim.prev;
+    const cells = prev.cells.slice();
+    const lit = prev.lit.slice();
+    let litCount = prev.litCount;
+    for (let j = 1; j <= seg; j++) {
+      const from = anim.cells[j - 1];
+      const to = anim.cells[j];
+      cells[from] = afterLeave(cells[from]);
+      if (isLamp(cells[to]) && !lit[to]) { lit[to] = true; litCount++; }
+    }
+    return { ...game.state, cells, lit, litCount, won: false, stuck: false };
+  }
+
   // —— 主循环 ——
   function frame(t) {
     let playerPx = null;
+    let view = game.state;
     if (anim) {
       const cell = renderer.cell;
       const lv = game.state.level;
-      const k = (t - anim.start) / STEP_MS;
-      const seg = Math.floor(k);
-      if (seg >= anim.cells.length - 1) {
+      const n = anim.cells.length - 1;
+      const f = Math.min(1, (t - anim.start) / anim.ms);
+      if (f >= 1) {
         anim = null;
+        if (n > 1) renderer.bump(0.35); // 撞停的轻微震动
         exposeDebug();
+        if (queued) { const q = queued; queued = null; doMove(q); }
       } else {
+        // 整段一次缓动：起步快、到头减速（ease-out），像在冰上滑
+        const e = 1 - Math.pow(1 - f, 2.2);
+        const k = e * n;
+        const seg = Math.min(n - 1, Math.floor(k));
         const a = anim.cells[seg];
         const b = anim.cells[seg + 1];
-        const f = k - seg;
-        const ease = f * f * (3 - 2 * f);
+        const g = k - seg;
         const ax = (a % lv.w) * cell, ay = Math.floor(a / lv.w) * cell;
         const bx = (b % lv.w) * cell, by = Math.floor(b / lv.w) * cell;
-        playerPx = { x: ax + (bx - ax) * ease, y: ay + (by - ay) * ease };
+        playerPx = { x: ax + (bx - ax) * g, y: ay + (by - ay) * g };
+        view = displayState(Math.round(k));
       }
     }
-    renderer.draw(game.state, { t, hintCells: anim ? [] : hintCells(), dim: game.state.stuck, playerPx });
+    renderer.draw(view, { t, hintCells: anim ? [] : hintCells(), dim: !anim && game.state.stuck, playerPx });
     requestAnimationFrame(frame);
   }
 

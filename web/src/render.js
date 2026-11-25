@@ -173,8 +173,8 @@ export class Renderer {
     return y * level.w + x;
   }
 
-  bump() {
-    this.shake = 1;
+  bump(strength = 1) {
+    this.shake = Math.max(this.shake, strength);
   }
 
   draw(state, { t = 0, hint = [], hintCells = [], dim = false, playerPx = null } = {}) {

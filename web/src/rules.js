@@ -120,30 +120,41 @@ export function hasLegalMove(s) {
 }
 
 /**
- * 一步移动。返回 { state, result, path }。
- * result: 'illegal' | 'moved' | 'won' | 'stuck'；path 为本步经过的格子（含推送链）。
+ * 一次玩家输入 = 一段滑行（SPEC 2.1 / 2.2）。返回 { state, result, path, looped }。
+ * - 沿 dir 一格一格滑：下一格能进入就进入（离开的格子按 afterLeave 结算），否则停下。
+ * - 进入风冰：滑行方向改为箭头方向，继续滑；箭头前方被挡则停在风冰上。
+ * - 进入家门（灯全亮）即胜利并停止。
+ * - 第一格就进不去 → illegal，状态不变。整段只算 1 步。
+ * result: 'illegal' | 'moved' | 'won' | 'stuck'；path 为沿途经过的格子（按顺序）。
  * 不修改入参 state。
  */
 export function move(state, dir) {
   if (!DIRS[dir]) throw new Error(`未知方向 ${dir}`);
-  if (state.won) return { state, result: 'illegal', path: [] };
-  const target = step(state.level, state.pos, dir);
-  if (!canEnter(state, target)) return { state, result: 'illegal', path: [] };
+  if (state.won) return { state, result: 'illegal', path: [], looped: false };
+  if (!canEnter(state, step(state.level, state.pos, dir))) return { state, result: 'illegal', path: [], looped: false };
   const s = cloneState(state);
-  enter(s, target);
   s.moves++;
-  const path = [target];
-  let guard = s.cells.length;
+  const path = [];
+  let cur = dir;
+  let guard = s.cells.length * 4; // 防死循环（雪地/风冰组成的环），关卡校验会拒绝
+  let looped = false;
   while (!s.won) {
-    const wd = windDir(s.cells[s.pos]);
-    if (!wd) break;
-    const next = step(s.level, s.pos, wd);
-    if (!canEnter(s, next) || guard-- <= 0) break;
+    const next = step(s.level, s.pos, cur);
+    if (!canEnter(s, next)) break;
+    if (guard-- <= 0) { looped = true; break; }
     enter(s, next);
     path.push(next);
+    const wd = windDir(s.cells[s.pos]);
+    if (wd) cur = wd;
   }
   s.stuck = !s.won && !hasLegalMove(s);
-  return { state: s, result: s.won ? 'won' : s.stuck ? 'stuck' : 'moved', path };
+  return { state: s, result: s.won ? 'won' : s.stuck ? 'stuck' : 'moved', path, looped };
+}
+
+/** 只看落点：一段滑行会停在哪里（不改状态），非法返回 -1。供提示绘制用。 */
+export function slideEnd(state, dir) {
+  const r = move(state, dir);
+  return r.result === 'illegal' ? -1 : r.state.pos;
 }
 
 /** 局面哈希：位置 + 格子 + 点灯。 */
