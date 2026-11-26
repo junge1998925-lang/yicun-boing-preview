@@ -55,13 +55,13 @@ async function boot() {
 
   function helpReady() {
     if (game.state.won) return false;
-    if (game.restarts >= 1 || game.state.stuck) return true;
+    if (game.helpUnlocked || game.restarts >= 1 || game.state.stuck) return true;
     return deadKnown;
   }
 
   function scheduleDeadCheck() {
     deadKnown = false;
-    if (game.state.won || game.state.stuck || game.restarts >= 1) return;
+    if (game.state.won || game.state.stuck || game.restarts >= 1 || game.helpUnlocked) return;
     pendingDead = true;
     // 求解放到空闲时，不阻塞输入
     setTimeout(() => {
@@ -205,11 +205,16 @@ async function boot() {
   function openHelp() {
     if (!helpReady()) return;
     $('btn-undo').disabled = !game.canUndo();
+    // 本关看过一次广告后：直接给，不再看广告
+    $('help-note').textContent = game.helpUnlocked ? '本关已看过广告，提示和悔一步可以直接用。' : '看一段短广告（模拟），播完后本关的提示和悔一步都可以直接用。';
+    $('btn-hint').textContent = game.helpUnlocked ? '看提示（接下来 3 步）' : '看广告 · 看提示（接下来 3 步）';
+    $('btn-undo').textContent = game.helpUnlocked ? '悔一步' : '看广告 · 悔一步';
     $('help-panel').hidden = false;
   }
   async function reward(kind) {
     $('help-panel').hidden = true;
-    const ok = await requestReward(ad, () => {
+    const grant = () => {
+      game.unlockHelp();
       if (kind === 'hint') {
         const { steps, rewound } = game.giveHint();
         message = steps.length
@@ -222,8 +227,13 @@ async function boot() {
       deadKnown = false;
       anim = null;
       scheduleDeadCheck();
-    });
-    if (!ok) message = '广告没看完，没有获得奖励。';
+    };
+    if (game.helpUnlocked) {
+      grant();
+    } else {
+      const ok = await requestReward(ad, grant);
+      if (!ok) message = '广告没看完，没有获得奖励。';
+    }
     updateUI();
   }
 
@@ -321,6 +331,7 @@ async function boot() {
       cells: s.cells.join(''),
       w: s.level.w,
       restarts: game.restarts,
+      helpUnlocked: game.helpUnlocked,
       hint: game.hint.slice(),
       helpEnabled: !$('btn-help').disabled,
       save: JSON.parse(JSON.stringify(game.save)),

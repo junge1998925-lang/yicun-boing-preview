@@ -37,6 +37,7 @@ export class Game {
     this.state = createState(this.levels[levelId - 1]);
     this.history = [];
     this.restarts = 0;
+    this.helpUnlocked = false; // 换关：按原规则重新计算
     this.hint = [];
     this.lastResult = null;
     this.save = setCurrent(this.save, levelId);
@@ -115,10 +116,18 @@ export class Game {
     return this.solveFrom(this.state).status === 'unsolvable';
   }
 
-  /** 求助可用：重开过、或困死、或已证明死局。开局不可用。 */
+  /**
+   * 求助可用：本关已看过一次完整广告（常亮）、或重开过、或困死、或已证明死局。开局不可用。
+   * 看过一次后本关剩下的时间里一直可用，重开也保留；换关（load）后清零。
+   */
   helpAvailable() {
     if (this.state.won) return false;
-    return this.restarts >= 1 || this.isDead();
+    return this.helpUnlocked || this.restarts >= 1 || this.isDead();
+  }
+
+  /** 本关看完一次激励视频后调用：本关剩下的时间里求助常亮，之后的提示 / 悔一步不再需要看广告。 */
+  unlockHelp() {
+    this.helpUnlocked = true;
   }
 
   canUndo() {
