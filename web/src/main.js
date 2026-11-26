@@ -88,13 +88,22 @@ async function boot() {
       banner.hidden = false;
       const last = game.levelId === game.count;
       $('banner-text').textContent = last ? '到家了。窗里的灯，一直为你亮着。' : '到家了！';
+      const r = game.stepResult();
+      const steps = $('banner-steps');
+      steps.hidden = false;
+      steps.textContent = `本关最少 ${r.par} 步，你用了 ${r.moves} 步` + (r.atPar ? '。漂亮！' : '');
+      steps.classList.toggle('over', !r.atPar);
       $('btn-next').hidden = last;
-      $('btn-banner-restart').hidden = true;
+      // 没打到最少步数时给一个「再试一次」，方便回头挑战
+      $('btn-banner-restart').hidden = r.atPar;
+      $('btn-banner-restart').textContent = '再试一次';
     } else if (s.stuck) {
       banner.hidden = false;
       $('banner-text').textContent = '这局走不通了';
+      $('banner-steps').hidden = true;
       $('btn-next').hidden = true;
       $('btn-banner-restart').hidden = false;
+      $('btn-banner-restart').textContent = '重开';
     } else {
       banner.hidden = true;
     }
@@ -197,9 +206,16 @@ async function boot() {
       b.textContent = String(i);
       b.dataset.level = String(i);
       b.disabled = i > game.save.unlocked;
-      if (game.save.solved.includes(i)) b.classList.add('solved');
+      const atPar = game.save.parSolved.includes(i);
+      if (atPar) {
+        b.classList.add('par');
+        const badge = document.createElement('span');
+        badge.className = 'par-badge';
+        badge.textContent = '最少';
+        b.appendChild(badge);
+      } else if (game.save.solved.includes(i)) b.classList.add('solved');
       if (i === game.levelId) b.classList.add('current');
-      b.title = i > game.save.unlocked ? '未解锁' : defs[i - 1].name;
+      b.title = i > game.save.unlocked ? '未解锁' : `${defs[i - 1].name}` + (atPar ? '（已以最少步数通关）' : game.save.solved.includes(i) ? '（已通关）' : '');
       b.addEventListener('click', () => { $('levels-panel').hidden = true; loadLevel(i); });
       grid.appendChild(b);
     }
@@ -269,7 +285,7 @@ async function boot() {
       restarts: game.restarts,
       hint: game.hint.slice(),
       helpEnabled: !$('btn-help').disabled,
-      save: { ...game.save, solved: game.save.solved.slice() },
+      save: JSON.parse(JSON.stringify(game.save)),
       get animating() { return !!anim; },
       par: game.def.par,
       solution: () => game.solveFrom(game.state).path || null,

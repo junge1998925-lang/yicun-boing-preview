@@ -65,10 +65,18 @@ export class Game {
       this.hint = this.hint[0] === dir ? this.hint.slice(1) : [];
     }
     if (result === 'won') {
-      this.save = markSolved(this.save, this.levelId, this.count);
+      this.lastWin = this.stepResult();
+      this.save = markSolved(this.save, this.levelId, this.count, this.lastWin.atPar);
       writeSave(this.storage, this.save);
     }
     return { result, path };
+  }
+
+  /** 本关目标步数结果：{ par, moves, atPar }。par 来自 levels.json（按滑行规则由求解器算出）。 */
+  stepResult() {
+    const par = this.def.par;
+    const moves = this.state.moves;
+    return { par, moves, atPar: Number.isInteger(par) && moves <= par };
   }
 
   solveFrom(state) {
