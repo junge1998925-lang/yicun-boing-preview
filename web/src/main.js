@@ -116,7 +116,27 @@ async function boot() {
       else if (s.moves === 0) tip = game.def.aha.startsWith('【教学】') ? game.def.aha.replace('【教学】', '') : '轻扫冰面：人会一路滑到撞上阻挡才停。薄冰只能踩一次。';
     }
     $('tip').textContent = tip;
+    updateGuide();
     exposeDebug();
+  }
+
+  // —— 轻扫引导（前 3 关，第一次有效轻扫后永久消失；纯展示，不是方向键） ——
+  let guideDir = null;
+  function updateGuide() {
+    const el = $('swipe-guide');
+    // 正在按住拖动（看落点预览）或滑行动画中时先藏起来，免得挡视线；条件满足时再出现
+    const show = game.showGuide() && !anim && !down;
+    el.hidden = !show;
+    if (!show) return;
+    guideDir = game.guideDir();
+    const lv = game.state.level;
+    const cvs = $('board');
+    const cell = renderer.cell;
+    const track = el.querySelector('.guide-track');
+    track.dataset.guide = guideDir;
+    track.style.left = cvs.offsetLeft + ((game.state.pos % lv.w) + 0.5) * cell + 'px';
+    track.style.top = cvs.offsetTop + (Math.floor(game.state.pos / lv.w) + 0.5) * cell + 'px';
+    track.style.setProperty('--len', Math.round(Math.max(60, Math.min(cell * 1.8, 120))) + 'px');
   }
 
   /** 提示：每次滑行的落点（按顺序）。 */
@@ -154,6 +174,7 @@ async function boot() {
       return;
     }
     anim = { cells: [from, ...path], prev, start: performance.now(), ms: Math.min(900, 90 + CELL_MS * path.length) };
+    updateGuide(); // 有效轻扫：game.move 已记下 tutorialDone，引导立即消失
     scheduleDeadCheck();
     updateUI();
   }
@@ -255,6 +276,7 @@ async function boot() {
     if (e.target.closest('button')) return; // 过关/困死横幅上的按钮照常点击
     down = { x: e.clientX, y: e.clientY };
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    updateGuide();
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!down) return;
@@ -267,8 +289,9 @@ async function boot() {
     down = null;
     setPreview(null);
     if (dir) doMove(dir);
+    updateGuide(); // 轻点、拖回取消、撞墙（非法）都不算学会：引导回来；有效轻扫则已永久关闭
   });
-  canvas.addEventListener('pointercancel', () => { down = null; setPreview(null); });
+  canvas.addEventListener('pointercancel', () => { down = null; setPreview(null); updateGuide(); });
 
   $('btn-restart').addEventListener('click', restart);
   $('btn-banner-restart').addEventListener('click', restart);
@@ -280,7 +303,7 @@ async function boot() {
   $('btn-ad-close').addEventListener('click', () => ad.abort());
   $('btn-levels').addEventListener('click', openLevels);
   $('btn-levels-close').addEventListener('click', () => { $('levels-panel').hidden = true; });
-  window.addEventListener('resize', layout);
+  window.addEventListener('resize', () => { layout(); updateGuide(); });
 
   // —— 调试钩子（e2e 用，只读快照 + 有限操作） ——
   function exposeDebug() {
@@ -304,6 +327,8 @@ async function boot() {
       get animating() { return !!anim; },
       par: game.def.par,
       solution: () => game.solveFrom(game.state).path || null,
+      guide: !$('swipe-guide').hidden,
+      guideDir: $('swipe-guide').hidden ? null : guideDir,
       preview: preview ? { dir: preview.dir, legal: preview.legal, end: preview.end, path: preview.path.slice(), won: preview.won, stuck: preview.stuck } : null,
       lastImpact: lastImpact ? { dir: lastImpact.dir, cell: lastImpact.cell, kind: lastImpact.kind, illegal: lastImpact.illegal, at: lastImpact.at } : null,
       loadLevel,
@@ -344,6 +369,7 @@ async function boot() {
           renderer.impact(hit.dir, hit.cell, { strength: Math.min(1, 0.45 + n * 0.08) });
           vibrate(12);
         }
+        updateGuide();
         exposeDebug();
         if (queued) {
           const q = queued;

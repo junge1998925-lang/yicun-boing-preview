@@ -1,7 +1,10 @@
 // 会话控制器：当前关、历史、重开、求助可用性、提示、悔一步、存档。无 DOM。
 import { parseLevel, createState, move, stateKey } from './rules.js';
 import { solve } from './solver.js';
-import { loadSave, writeSave, markSolved, setCurrent } from './save.js';
+import { loadSave, writeSave, markSolved, setCurrent, markTutorialDone } from './save.js';
+
+/** 显示轻扫引导的关卡（教学关 1、2 与第一道思考题 3）。 */
+export const GUIDE_LEVELS = [1, 2, 3];
 
 export const HINT_STEPS = 3;
 
@@ -59,6 +62,11 @@ export class Game {
     const { state, result, path } = move(this.state, dir);
     this.lastResult = result;
     if (result === 'illegal') return { result, path };
+    // 第一次有效轻扫（真的滑出去了）：轻扫引导永久关闭
+    if (!this.save.tutorialDone) {
+      this.save = markTutorialDone(this.save);
+      writeSave(this.storage, this.save);
+    }
     this.history.push(this.state);
     this.state = state;
     if (this.hint.length) {
@@ -70,6 +78,18 @@ export class Game {
       writeSave(this.storage, this.save);
     }
     return { result, path };
+  }
+
+  /** 是否显示轻扫引导：前 3 关、还没有过一次有效轻扫、本局未结束。 */
+  showGuide() {
+    return !this.save.tutorialDone && GUIDE_LEVELS.includes(this.levelId) && !this.state.won && !this.state.stuck;
+  }
+
+  /** 引导演示的方向：本关解法的第一步（保证是一条合理、不会走死的方向）；求不出时取第一个合法方向。 */
+  guideDir() {
+    const r = this.solveFrom(this.state);
+    if (r.status === 'solved' && r.path.length) return r.path[0];
+    return ['right', 'down', 'left', 'up'].find((d) => move(this.state, d).result !== 'illegal') || 'right';
   }
 
   /** 本关目标步数结果：{ par, moves, atPar }。par 来自 levels.json（按滑行规则由求解器算出）。 */

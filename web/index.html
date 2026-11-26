@@ -20,6 +20,11 @@
 
     <div id="board-wrap">
       <canvas id="board" aria-label="冰面"></canvas>
+      <!-- 轻扫引导：纯展示，不可点击（pointer-events: none），第一次有效轻扫后永久消失 -->
+      <div id="swipe-guide" class="swipe-guide" hidden aria-hidden="true">
+        <div class="guide-track"><span class="guide-trail"></span><span class="guide-finger"></span></div>
+        <p class="guide-text">按住冰面，朝一个方向轻扫</p>
+      </div>
       <div id="banner" class="banner" hidden>
         <p id="banner-text"></p>
         <p id="banner-steps" class="banner-steps" hidden></p>
