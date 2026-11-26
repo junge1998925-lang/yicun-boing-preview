@@ -164,15 +164,6 @@ export class Renderer {
     this.ctx.imageSmoothingEnabled = false;
   }
 
-  /** 屏幕坐标 → 格子下标（越界返回 -1）。 */
-  cellAt(level, clientX, clientY) {
-    const r = this.canvas.getBoundingClientRect();
-    const x = Math.floor((clientX - r.left) / this.cell);
-    const y = Math.floor((clientY - r.top) / this.cell);
-    if (x < 0 || y < 0 || x >= level.w || y >= level.h) return -1;
-    return y * level.w + x;
-  }
-
   bump(strength = 1) {
     this.shake = Math.max(this.shake, strength);
   }

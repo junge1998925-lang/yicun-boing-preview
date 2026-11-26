@@ -3,12 +3,12 @@ import { Game } from './game.js';
 import { Renderer } from './render.js';
 import { SimulatedRewardedAd, requestReward } from './ads.js';
 import { allLit, move as slide, afterLeave, isLamp } from './rules.js';
+import { swipeDir, SWIPE_EARLY_PX } from './input.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const AD_MS = Math.max(200, Number(params.get('adms')) || 4000);
 const CELL_MS = 55; // 滑行动画：每格耗时
-const SWIPE_PX = 18; // 轻扫判定阈值
 
 function storage() {
   try {
@@ -207,57 +207,35 @@ async function boot() {
   }
 
   // —— 输入 ——
-  const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
+  // 移动只有一种方式：在画布上轻扫（鼠标拖拽 / 触摸）。没有方向键、没有 WASD、没有「轻点某侧滑行」。
+  // 键盘只保留与移动无关的快捷键：R 重开，过关后 Enter 进下一关。
   window.addEventListener('keydown', (e) => {
-    if (KEYMAP[e.key]) { e.preventDefault(); doMove(KEYMAP[e.key]); }
-    else if (e.key === 'r' || e.key === 'R') restart();
+    if (e.key === 'r' || e.key === 'R') restart();
     else if (e.key === 'Enter' && game.state.won && game.levelId < game.count) loadLevel(game.levelId + 1);
   });
-  // 屏幕方向键：按下即滑（触摸手势后浏览器可能不合成 click，不能依赖 click）。
-  // click 只处理键盘激活（Tab 聚焦后按空格/回车，detail === 0），避免与 pointerdown 重复。
-  document.querySelectorAll('.pad button').forEach((b) => {
-    b.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      doMove(b.dataset.dir);
-    });
-    b.addEventListener('click', (e) => { if (e.detail === 0) doMove(b.dataset.dir); });
-  });
 
-  const canvas = $('board');
+  // 轻扫区域 = 整个游戏区（画布及其四周空白），手机上不必精确按在小画布上
+  const canvas = $('board-wrap');
   let down = null;
   canvas.addEventListener('pointerdown', (e) => {
-    down = { x: e.clientX, y: e.clientY };
+    if (e.target.closest('button')) return; // 过关/困死横幅上的按钮照常点击
+    down = { x: e.clientX, y: e.clientY, fired: false };
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
-  });
-  canvas.addEventListener('pointerup', (e) => {
-    if (!down) return;
-    const dx = e.clientX - down.x;
-    const dy = e.clientY - down.y;
-    const fired = down.fired;
-    down = null;
-    if (fired) return;
-    if (Math.hypot(dx, dy) >= SWIPE_PX) {
-      doMove(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up');
-      return;
-    }
-    // 轻点：按点击位置相对玩家的主方向，发起同一套整段滑行（不是走一格）
-    const lv = game.state.level;
-    const i = renderer.cellAt(lv, e.clientX, e.clientY);
-    if (i < 0 || i === game.state.pos) return;
-    const p = game.state.pos;
-    const ddx = (i % lv.w) - (p % lv.w);
-    const ddy = Math.floor(i / lv.w) - Math.floor(p / lv.w);
-    doMove(Math.abs(ddx) >= Math.abs(ddy) ? (ddx > 0 ? 'right' : 'left') : ddy > 0 ? 'down' : 'up');
   });
   // 拖动中途一旦超过阈值就立即出发，手感更跟手
   canvas.addEventListener('pointermove', (e) => {
     if (!down || down.fired) return;
-    const dx = e.clientX - down.x;
-    const dy = e.clientY - down.y;
-    if (Math.hypot(dx, dy) < SWIPE_PX * 1.6) return;
+    const dir = swipeDir(e.clientX - down.x, e.clientY - down.y, SWIPE_EARLY_PX);
+    if (!dir) return;
     down.fired = true;
-    doMove(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up');
+    doMove(dir);
+  });
+  // 快速轻扫可能只有很少的 move 事件：抬起时补判一次。位移不到阈值（轻点）不做任何事。
+  canvas.addEventListener('pointerup', (e) => {
+    if (!down) return;
+    const dir = down.fired ? null : swipeDir(e.clientX - down.x, e.clientY - down.y);
+    down = null;
+    if (dir) doMove(dir);
   });
   canvas.addEventListener('pointercancel', () => { down = null; });
 
