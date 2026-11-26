@@ -3,12 +3,13 @@ import { Game } from './game.js';
 import { Renderer } from './render.js';
 import { SimulatedRewardedAd, requestReward } from './ads.js';
 import { allLit, move as slide, afterLeave, isLamp } from './rules.js';
-import { swipeDir, SWIPE_EARLY_PX } from './input.js';
+import { swipeDir, previewSwipe, impactOf } from './input.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const AD_MS = Math.max(200, Number(params.get('adms')) || 4000);
 const CELL_MS = 55; // 滑行动画：每格耗时
+const IMPACT_PAUSE_MS = 70; // 撞停后的短暂停顿（缓存的下一次轻扫在停顿后执行）
 
 function storage() {
   try {
@@ -132,6 +133,10 @@ async function boot() {
   }
 
   let queued = null; // 动画中缓存 1 次输入
+  let preview = null; // 拖动中的落点预览（input.previewSwipe 的结果）
+  let lastImpact = null; // 最近一次撞停 / 非法顶墙（供 e2e 断言）
+  const dirVec = (d) => ({ up: [0, -40], down: [0, 40], left: [-40, 0], right: [40, 0] })[d];
+  const vibrate = (ms) => { if (navigator.vibrate) try { navigator.vibrate(ms); } catch {} };
   function doMove(dir) {
     if (!$('ad-overlay').hidden || !$('help-panel').hidden || !$('levels-panel').hidden) return;
     if (anim) { queued = dir; return; }
@@ -140,8 +145,12 @@ async function boot() {
     const { result, path } = game.move(dir);
     message = '';
     if (result === 'illegal') {
-      renderer.bump();
-      if (navigator.vibrate) try { navigator.vibrate(15); } catch {}
+      // 第一格就进不去：朝该方向顶一下再弹回，并把挡住的那格描红一下
+      const pv = previewSwipe(prev, ...dirVec(dir));
+      lastImpact = { dir, cell: pv ? pv.end : -1, kind: 'blocked', illegal: true, at: performance.now() };
+      renderer.impact(dir, lastImpact.cell, { strength: 1, illegal: true });
+      vibrate(20);
+      exposeDebug();
       return;
     }
     anim = { cells: [from, ...path], prev, start: performance.now(), ms: Math.min(900, 90 + CELL_MS * path.length) };
@@ -233,27 +242,33 @@ async function boot() {
   // 轻扫区域 = 整个游戏区（画布及其四周空白），手机上不必精确按在小画布上
   const canvas = $('board-wrap');
   let down = null;
+  // 按下 → 拖动时预览落点（随手指方向实时更新，拖回原点即取消）→ 松手才真正滑行。
+  // 预览只是反馈：不移动、不计步。轻点（位移不足阈值）什么都不做。
+  const busy = () => !$('ad-overlay').hidden || !$('help-panel').hidden || !$('levels-panel').hidden;
+  function setPreview(p) {
+    const same = (a, b) => (a && b ? a.dir === b.dir && a.end === b.end && a.legal === b.legal : a === b);
+    if (same(preview, p)) return;
+    preview = p;
+    exposeDebug();
+  }
   canvas.addEventListener('pointerdown', (e) => {
     if (e.target.closest('button')) return; // 过关/困死横幅上的按钮照常点击
-    down = { x: e.clientX, y: e.clientY, fired: false };
+    down = { x: e.clientX, y: e.clientY };
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
   });
-  // 拖动中途一旦超过阈值就立即出发，手感更跟手
   canvas.addEventListener('pointermove', (e) => {
-    if (!down || down.fired) return;
-    const dir = swipeDir(e.clientX - down.x, e.clientY - down.y, SWIPE_EARLY_PX);
-    if (!dir) return;
-    down.fired = true;
-    doMove(dir);
+    if (!down) return;
+    // 动画中不预览（局面还在变）；松手时的输入会照常排队
+    setPreview(anim || busy() ? null : previewSwipe(game.state, e.clientX - down.x, e.clientY - down.y));
   });
-  // 快速轻扫可能只有很少的 move 事件：抬起时补判一次。位移不到阈值（轻点）不做任何事。
   canvas.addEventListener('pointerup', (e) => {
     if (!down) return;
-    const dir = down.fired ? null : swipeDir(e.clientX - down.x, e.clientY - down.y);
+    const dir = swipeDir(e.clientX - down.x, e.clientY - down.y);
     down = null;
+    setPreview(null);
     if (dir) doMove(dir);
   });
-  canvas.addEventListener('pointercancel', () => { down = null; });
+  canvas.addEventListener('pointercancel', () => { down = null; setPreview(null); });
 
   $('btn-restart').addEventListener('click', restart);
   $('btn-banner-restart').addEventListener('click', restart);
@@ -289,6 +304,8 @@ async function boot() {
       get animating() { return !!anim; },
       par: game.def.par,
       solution: () => game.solveFrom(game.state).path || null,
+      preview: preview ? { dir: preview.dir, legal: preview.legal, end: preview.end, path: preview.path.slice(), won: preview.won, stuck: preview.stuck } : null,
+      lastImpact: lastImpact ? { dir: lastImpact.dir, cell: lastImpact.cell, kind: lastImpact.kind, illegal: lastImpact.illegal, at: lastImpact.at } : null,
       loadLevel,
     };
   }
@@ -318,10 +335,22 @@ async function boot() {
       const n = anim.cells.length - 1;
       const f = Math.min(1, (t - anim.start) / anim.ms);
       if (f >= 1) {
+        const cells = anim.cells;
         anim = null;
-        if (n > 1) renderer.bump(0.35); // 撞停的轻微震动
+        // 撞停反馈：朝被挡方向挤一下再弹回 + 挡住的那格闪一下 + 短暂停顿（停顿期间缓存的下一次轻扫稍后执行）
+        const hit = impactOf(game.state, cells);
+        if (hit) {
+          lastImpact = { ...hit, illegal: false, at: t };
+          renderer.impact(hit.dir, hit.cell, { strength: Math.min(1, 0.45 + n * 0.08) });
+          vibrate(12);
+        }
         exposeDebug();
-        if (queued) { const q = queued; queued = null; doMove(q); }
+        if (queued) {
+          const q = queued;
+          queued = null;
+          if (hit) setTimeout(() => doMove(q), IMPACT_PAUSE_MS);
+          else doMove(q);
+        }
       } else {
         // 整段一次缓动：起步快、到头减速（ease-out），像在冰上滑
         const e = 1 - Math.pow(1 - f, 2.2);
@@ -336,7 +365,7 @@ async function boot() {
         view = displayState(Math.round(k));
       }
     }
-    renderer.draw(view, { t, hintCells: anim ? [] : hintCells(), dim: !anim && game.state.stuck, playerPx });
+    renderer.draw(view, { t, hintCells: anim || preview ? [] : hintCells(), dim: !anim && game.state.stuck, playerPx, preview: anim ? null : preview });
     requestAnimationFrame(frame);
   }
 

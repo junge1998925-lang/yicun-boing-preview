@@ -168,7 +168,79 @@ export class Renderer {
     this.shake = Math.max(this.shake, strength);
   }
 
-  draw(state, { t = 0, hint = [], hintCells = [], dim = false, playerPx = null } = {}) {
+  /**
+   * 撞停 / 顶墙反馈：玩家朝 dir 方向挤一下再弹回，挡住的格子闪一下。
+   * illegal=true（第一格就进不去）时闪红，否则闪白。
+   */
+  impact(dir, cell, { strength = 1, illegal = false } = {}) {
+    this.hit = { dir, cell, strength, illegal, start: performance.now() };
+  }
+
+  /** 当前撞停动画进度：返回 { dx, dy, flash } 或 null。 */
+  _hitState(now) {
+    const h = this.hit;
+    if (!h) return null;
+    const k = (now - h.start) / (h.illegal ? 220 : 180);
+    if (k >= 1) { this.hit = null; return null; }
+    // 先快速挤压（前 30%）再弹回，带一点回弹
+    const push = k < 0.3 ? k / 0.3 : Math.max(0, 1 - (k - 0.3) / 0.7) * Math.cos((k - 0.3) * 9);
+    const amp = this.cell * (h.illegal ? 0.16 : 0.12) * h.strength * push;
+    const v = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[h.dir];
+    return { dx: v[0] * amp, dy: v[1] * amp, flash: Math.max(0, 1 - k * 1.4), cell: h.cell, illegal: h.illegal };
+  }
+
+  /** 落点预览：沿途淡色虚线 + 落点描边（胜利为暖黄、困死为红、普通为白）；非法为挡住格的红叉。 */
+  _drawPreview(lv, p, t) {
+    const { ctx, cell } = this;
+    const cx = (i) => (i % lv.w) * cell + cell / 2;
+    const cy = (i) => Math.floor(i / lv.w) * cell + cell / 2;
+    ctx.save();
+    if (!p.legal) {
+      if (p.end >= 0) {
+        const x = (p.end % lv.w) * cell, y = Math.floor(p.end / lv.w) * cell;
+        ctx.strokeStyle = 'rgba(255, 110, 110, 0.9)';
+        ctx.lineWidth = Math.max(2, cell / 14);
+        const m = cell * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(x + m, y + m); ctx.lineTo(x + cell - m, y + cell - m);
+        ctx.moveTo(x + cell - m, y + m); ctx.lineTo(x + m, y + cell - m);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+    const color = p.won ? 'rgba(255, 207, 107, 0.95)' : p.stuck ? 'rgba(255, 120, 120, 0.9)' : 'rgba(235, 248, 255, 0.9)';
+    // 沿途小点：深色描边 + 亮色填充，冰面/雪地/风冰上都看得清
+    const r = Math.max(2.5, cell / 10);
+    for (const i of p.path.slice(0, -1)) {
+      ctx.beginPath();
+      ctx.arc(cx(i), cy(i), r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.lineWidth = Math.max(1.5, cell / 24);
+      ctx.strokeStyle = 'rgba(11, 20, 38, 0.85)';
+      ctx.stroke();
+    }
+    // 落点：呼吸的描边方框 + 脚印
+    const x = (p.end % lv.w) * cell, y = Math.floor(p.end / lv.w) * cell;
+    const pulse = 0.5 + 0.5 * Math.sin(t / 140);
+    const inset0 = 3 + pulse * 2;
+    ctx.strokeStyle = 'rgba(11, 20, 38, 0.85)'; // 深色底框，保证在浅色冰面上也醒目
+    ctx.lineWidth = Math.max(4, cell / 7);
+    ctx.strokeRect(x + inset0, y + inset0, cell - inset0 * 2, cell - inset0 * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, cell / 12);
+    ctx.setLineDash([cell / 5, cell / 10]);
+    ctx.lineDashOffset = -t / 50;
+    const inset = 3 + pulse * 2;
+    ctx.strokeRect(x + inset, y + inset, cell - inset * 2, cell - inset * 2);
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.25 + 0.15 * pulse;
+    ctx.fillRect(x + inset, y + inset, cell - inset * 2, cell - inset * 2);
+    ctx.restore();
+  }
+
+  draw(state, { t = 0, hint = [], hintCells = [], dim = false, playerPx = null, preview = null } = {}) {
     const { ctx, cell } = this;
     const lv = state.level;
     ctx.save();
@@ -204,6 +276,14 @@ export class Renderer {
       else if (ch === 'H') drawHouse(p, lit, ctx, cx, cy, cell);
       ctx.restore();
     }
+    const hit = this._hitState(performance.now());
+    // 挡住的格子闪一下（非法顶墙为红，撞停为白）
+    if (hit && hit.cell >= 0 && hit.flash > 0) {
+      const x = (hit.cell % lv.w) * cell, y = Math.floor(hit.cell / lv.w) * cell;
+      ctx.fillStyle = hit.illegal ? `rgba(255, 90, 90, ${0.45 * hit.flash})` : `rgba(255, 255, 255, ${0.35 * hit.flash})`;
+      ctx.fillRect(x, y, cell, cell);
+    }
+    if (preview) this._drawPreview(lv, preview, t);
     // 提示路径
     if (hintCells.length) {
       ctx.lineWidth = Math.max(2, cell / 12);
@@ -223,7 +303,8 @@ export class Renderer {
       ctx.setLineDash([]);
     }
     // 玩家
-    const pp = playerPx || { x: (state.pos % lv.w) * cell, y: Math.floor(state.pos / lv.w) * cell };
+    const base = playerPx || { x: (state.pos % lv.w) * cell, y: Math.floor(state.pos / lv.w) * cell };
+    const pp = hit ? { x: base.x + hit.dx, y: base.y + hit.dy } : base;
     drawPlayer(painter(ctx, pp.x, pp.y, cell), t, state.won);
     if (dim) {
       ctx.fillStyle = 'rgba(3, 7, 15, 0.45)';
