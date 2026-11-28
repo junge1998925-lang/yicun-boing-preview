@@ -207,18 +207,20 @@ async function boot() {
     $('btn-undo').disabled = !game.canUndo();
     // 本关看过一次广告后：直接给，不再看广告
     $('help-note').textContent = game.helpUnlocked ? '本关已看过广告，提示和悔一步可以直接用。' : '看一段短广告（模拟），播完后本关的提示和悔一步都可以直接用。';
-    $('btn-hint').textContent = game.helpUnlocked ? '看提示（接下来 3 步）' : '看广告 · 看提示（接下来 3 步）';
+    const n = game.nextHintSteps();
+    $('btn-hint').textContent = game.helpUnlocked ? `看提示（下 ${n} 步）` : `看广告 · 看提示（接下来 ${n} 步）`;
     $('btn-undo').textContent = game.helpUnlocked ? '悔一步' : '看广告 · 悔一步';
     $('help-panel').hidden = false;
   }
   async function reward(kind) {
     $('help-panel').hidden = true;
     const grant = () => {
+      const n = game.nextHintSteps(); // 先取步数：看广告这次给 3 步，之后常亮免费的每次 1 步
       game.unlockHelp();
       if (kind === 'hint') {
-        const { steps, rewound } = game.giveHint();
+        const { steps, rewound } = game.giveHint(n);
         message = steps.length
-          ? (rewound ? `已退回 ${rewound} 步到还能回家的地方。` : '') + '按数字顺序滑（数字是每次滑行停下的位置）。'
+          ? (rewound ? `已退回 ${rewound} 步到还能回家的地方。` : '') + (steps.length > 1 ? '按数字顺序滑（数字是每次滑行停下的位置）。' : '朝数字 1 那格滑一次。')
           : '这关有点绕，先重开试试。';
       } else {
         game.undo();
@@ -247,15 +249,26 @@ async function boot() {
       b.dataset.level = String(i);
       b.disabled = i > game.save.unlocked;
       const atPar = game.save.parSolved.includes(i);
+      const noHint = game.save.noHintSolved.includes(i);
+      if (atPar) b.classList.add('par');
+      else if (game.save.solved.includes(i)) b.classList.add('solved');
+      if (noHint) b.classList.add('nohint');
+      // 两个角标并列：右上「最少」、左上「独立」（没用提示通关）
       if (atPar) {
-        b.classList.add('par');
         const badge = document.createElement('span');
         badge.className = 'par-badge';
         badge.textContent = '最少';
         b.appendChild(badge);
-      } else if (game.save.solved.includes(i)) b.classList.add('solved');
+      }
+      if (noHint) {
+        const badge = document.createElement('span');
+        badge.className = 'nohint-badge';
+        badge.textContent = '独立';
+        b.appendChild(badge);
+      }
       if (i === game.levelId) b.classList.add('current');
-      b.title = i > game.save.unlocked ? '未解锁' : `${defs[i - 1].name}` + (atPar ? '（已以最少步数通关）' : game.save.solved.includes(i) ? '（已通关）' : '');
+      const marks = [atPar && '已以最少步数通关', noHint && '没用提示通关'].filter(Boolean);
+      b.title = i > game.save.unlocked ? '未解锁' : `${defs[i - 1].name}` + (marks.length ? `（${marks.join('，')}）` : game.save.solved.includes(i) ? '（已通关）' : '');
       b.addEventListener('click', () => { $('levels-panel').hidden = true; loadLevel(i); });
       grid.appendChild(b);
     }
@@ -291,7 +304,7 @@ async function boot() {
   canvas.addEventListener('pointermove', (e) => {
     if (!down) return;
     // 动画中不预览（局面还在变）；松手时的输入会照常排队
-    setPreview(anim || busy() ? null : previewSwipe(game.state, e.clientX - down.x, e.clientY - down.y));
+    setPreview(anim || busy() ? null : previewSwipe(game.state, e.clientX - down.x, e.clientY - down.y, { revealStuck: game.revealStuckInPreview() }));
   });
   canvas.addEventListener('pointerup', (e) => {
     if (!down) return;
@@ -332,6 +345,8 @@ async function boot() {
       w: s.level.w,
       restarts: game.restarts,
       helpUnlocked: game.helpUnlocked,
+      hintUsed: game.hintUsed,
+      revealStuck: game.revealStuckInPreview(),
       hint: game.hint.slice(),
       helpEnabled: !$('btn-help').disabled,
       save: JSON.parse(JSON.stringify(game.save)),

@@ -52,7 +52,10 @@ button.pulse { animation: pulse 1s ease-in-out infinite; }
 .level-grid button.par { background: #3d3a1c; box-shadow: inset 0 0 0 2px var(--warm); }
 .par-badge, .legend .key.par { background: var(--warm); color: #2a1c00; font-size: 10px;
   line-height: 14px; padding: 0 3px; border-radius: 4px; font-weight: bold; }
-.par-badge { position: absolute; top: -6px; right: -4px; }
+.par-badge { position: absolute; top: -6px; right: 2px; }
+.nohint-badge, .legend .key.nohint { background: #8fd3a8; color: #0f2a19; font-size: 10px;
+  line-height: 14px; padding: 0 3px; border-radius: 4px; font-weight: bold; }
+.nohint-badge { position: absolute; top: -6px; left: 2px; }
 .legend { display: flex; align-items: center; justify-content: center; gap: 4px; flex-wrap: wrap; }
 .legend .key { display: inline-block; }
 .legend .key.solved { width: 14px; height: 14px; border-radius: 3px; background: #2d4a2f; }

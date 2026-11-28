@@ -3,9 +3,10 @@ export const SAVE_KEY = 'yicun-boing.save.v1';
 
 // v1 存档字段：unlocked / current / solved；以下为后加字段，版本号保持 1，新旧代码可互读：
 // - parSolved：以不超过 par 的步数通关过的关卡。旧存档没有时视为 []。
+// - noHintSolved：没用过提示就通关过的关卡（P13）。旧存档没有时视为 []（不知道当时用没用过提示，不补标）。
 // - tutorialDone：是否已完成过一次有效轻扫（轻扫引导永久关闭）。旧存档没有时：已有通关记录视为 true，否则 false。
 export function defaultSave() {
-  return { v: 1, unlocked: 1, current: 1, solved: [], parSolved: [], tutorialDone: false };
+  return { v: 1, unlocked: 1, current: 1, solved: [], parSolved: [], noHintSolved: [], tutorialDone: false };
 }
 
 function sanitize(raw, levelCount) {
@@ -21,8 +22,9 @@ function sanitize(raw, levelCount) {
   const clean = (arr) => (Array.isArray(arr) ? [...new Set(arr.filter(isLv))].sort((a, b) => a - b) : []);
   const solved = clean(raw.solved);
   const parSolved = clean(raw.parSolved).filter((n) => solved.includes(n)); // 打到 par 必然已通关
+  const noHintSolved = clean(raw.noHintSolved).filter((n) => solved.includes(n));
   const tutorialDone = raw.tutorialDone === true || solved.length > 0; // 通关过的老玩家显然会轻扫
-  return { v: 1, unlocked, current, solved, parSolved, tutorialDone };
+  return { v: 1, unlocked, current, solved, parSolved, noHintSolved, tutorialDone };
 }
 
 export function loadSave(storage, levelCount) {
@@ -46,13 +48,18 @@ export function writeSave(storage, save) {
 
 const addSorted = (arr, n) => (arr.includes(n) ? arr.slice() : [...arr, n].sort((a, b) => a - b));
 
-/** 过关后的新存档（不修改入参）。atPar：本次步数 ≤ par。一旦打到 par 就一直保留（之后超步数通关不会取消）。 */
-export function markSolved(save, levelId, levelCount, atPar = false) {
+/**
+ * 过关后的新存档（不修改入参）。
+ * atPar：本次步数 ≤ par；noHint：本次进关后没用过提示。两项都是一旦达成就一直保留（之后再过关不会取消）。
+ */
+export function markSolved(save, levelId, levelCount, atPar = false, noHint = false) {
   const solved = addSorted(save.solved, levelId);
   const prevPar = save.parSolved || [];
   const parSolved = atPar ? addSorted(prevPar, levelId) : prevPar.slice();
+  const prevNoHint = save.noHintSolved || [];
+  const noHintSolved = noHint ? addSorted(prevNoHint, levelId) : prevNoHint.slice();
   const unlocked = Math.min(levelCount, Math.max(save.unlocked, levelId + 1));
-  return { ...save, solved, parSolved, unlocked };
+  return { ...save, solved, parSolved, noHintSolved, unlocked };
 }
 
 /** 完成第一次有效轻扫：轻扫引导永久关闭（不修改入参）。 */

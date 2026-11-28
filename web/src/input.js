@@ -15,8 +15,9 @@ export function swipeDir(dx, dy, threshold = SWIPE_PX) {
  * 直接调用规则层 move()（纯函数，不改状态），不另造移动规则。
  * 返回 null（位移不足 / 已胜利）或 { dir, legal, path, end, won, stuck }。
  * legal=false 表示第一格就进不去：end 为被挡住的那一格（越界时为 -1）。
+ * revealStuck=false 时不告诉玩家「这一下会困死」：stuck 恒为 false（P13：第 6 关起不剧透）。
  */
-export function previewSwipe(state, dx, dy) {
+export function previewSwipe(state, dx, dy, { revealStuck = true } = {}) {
   if (state.won) return null;
   const dir = swipeDir(dx, dy);
   if (!dir) return null;
@@ -24,7 +25,7 @@ export function previewSwipe(state, dx, dy) {
   if (r.result === 'illegal') {
     return { dir, legal: false, path: [], end: neighbor(state.level, state.pos, dir), won: false, stuck: false };
   }
-  return { dir, legal: true, path: r.path, end: r.state.pos, won: r.result === 'won', stuck: r.result === 'stuck' };
+  return { dir, legal: true, path: r.path, end: r.state.pos, won: r.result === 'won', stuck: revealStuck && r.result === 'stuck' };
 }
 
 function neighbor(level, i, dir) {

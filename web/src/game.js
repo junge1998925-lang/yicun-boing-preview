@@ -6,7 +6,12 @@ import { loadSave, writeSave, markSolved, setCurrent, markTutorialDone } from '.
 /** 显示轻扫引导的关卡（教学关 1、2 与第一道思考题 3）。 */
 export const GUIDE_LEVELS = [1, 2, 3];
 
+/** 看广告换来的提示：画出接下来 3 次滑行的落点。 */
 export const HINT_STEPS = 3;
+/** 本关求助常亮后免费的提示：每次只画接下来 1 次滑行的落点（P13）。 */
+export const FREE_HINT_STEPS = 1;
+/** 落点预览用红色标出「这一下会困死」的最后一关（P13）：之后只显示落点，不剧透。 */
+export const STUCK_PREVIEW_MAX_LEVEL = 5;
 
 export class Game {
   /**
@@ -38,6 +43,7 @@ export class Game {
     this.history = [];
     this.restarts = 0;
     this.helpUnlocked = false; // 换关：按原规则重新计算
+    this.hintUsed = false; // 本次进关后是否用过提示（重开不清零，换关清零）
     this.hint = [];
     this.lastResult = null;
     this.save = setCurrent(this.save, levelId);
@@ -75,7 +81,7 @@ export class Game {
     }
     if (result === 'won') {
       this.lastWin = this.stepResult();
-      this.save = markSolved(this.save, this.levelId, this.count, this.lastWin.atPar);
+      this.save = markSolved(this.save, this.levelId, this.count, this.lastWin.atPar, !this.hintUsed);
       writeSave(this.storage, this.save);
     }
     return { result, path };
@@ -91,6 +97,16 @@ export class Game {
     const r = this.solveFrom(this.state);
     if (r.status === 'solved' && r.path.length) return r.path[0];
     return ['right', 'down', 'left', 'up'].find((d) => move(this.state, d).result !== 'illegal') || 'right';
+  }
+
+  /** 落点预览是否标出「这一下会困死」：只在前几关（教学期）标红。 */
+  revealStuckInPreview() {
+    return this.levelId <= STUCK_PREVIEW_MAX_LEVEL;
+  }
+
+  /** 下一次「看提示」会给几步：本关已看过广告（常亮）则 1 步，否则（要看广告）3 步。 */
+  nextHintSteps() {
+    return this.helpUnlocked ? FREE_HINT_STEPS : HINT_STEPS;
   }
 
   /** 本关目标步数结果：{ par, moves, atPar }。par 来自 levels.json（按滑行规则由求解器算出）。 */
@@ -145,9 +161,11 @@ export class Game {
 
   /**
    * 奖励：提示。若当前死局，先回退到最近可解局面。
+   * n：画出接下来几次滑行（看广告 = HINT_STEPS，常亮后免费 = FREE_HINT_STEPS）。
    * 返回 { steps, rewound }；steps 为空表示求解超预算（极少见）。
    */
-  giveHint() {
+  giveHint(n = HINT_STEPS) {
+    this.hintUsed = true;
     let rewound = 0;
     let r = this.solveFrom(this.state);
     while (r.status === 'unsolvable' && this.history.length) {
@@ -161,7 +179,7 @@ export class Game {
       this.history = [];
       r = this.solveFrom(this.state);
     }
-    this.hint = r.status === 'solved' ? r.path.slice(0, HINT_STEPS) : [];
+    this.hint = r.status === 'solved' ? r.path.slice(0, n) : [];
     this.lastResult = null;
     return { steps: this.hint.slice(), rewound };
   }
