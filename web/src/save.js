@@ -12,8 +12,12 @@ function sanitize(raw, levelCount) {
   const d = defaultSave();
   if (!raw || typeof raw !== 'object' || raw.v !== 1) return d;
   const isLv = (n) => Number.isInteger(n) && n >= 1 && n <= levelCount;
-  const unlocked = isLv(raw.unlocked) ? raw.unlocked : d.unlocked;
-  const current = isLv(raw.current) && raw.current <= unlocked ? raw.current : Math.min(unlocked, d.current);
+  // 关卡总数变少（例如 P12 从 22 关删到 19 关）时，超出的解锁 / 当前关夹到最后一关，而不是清零进度
+  const clampLv = (n) => (Number.isInteger(n) && n > levelCount ? levelCount : n);
+  const rawUnlocked = clampLv(raw.unlocked);
+  const unlocked = isLv(rawUnlocked) ? rawUnlocked : d.unlocked;
+  const rawCurrent = clampLv(raw.current);
+  const current = isLv(rawCurrent) && rawCurrent <= unlocked ? rawCurrent : Math.min(unlocked, d.current);
   const clean = (arr) => (Array.isArray(arr) ? [...new Set(arr.filter(isLv))].sort((a, b) => a - b) : []);
   const solved = clean(raw.solved);
   const parSolved = clean(raw.parSolved).filter((n) => solved.includes(n)); // 打到 par 必然已通关
